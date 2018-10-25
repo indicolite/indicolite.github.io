@@ -6,7 +6,7 @@ comments: true
 categories:
 ---
 就是这段代码，之前循环的效率很低，最后写到一条命令里面，将收集的beacon日志的热门覆盖放到数据库里给程序做排序的权重， 跟我相关的就是把它们丢到数据库里，仅此而已。
-```
+``` Bash
 #!/bin/bash
 DEST=$(dirname $0)
 
@@ -34,7 +34,7 @@ $PSQL -h $DBHOST00 -U $USR -d $DB00 -H -c $"\copy top_query (departure, query, f
 $PSQL -h $DBHOST00 -U $USR -d $DB00 -H -c $"update top_query set departure=decode_url_part(departure),query=decode_url_part(query)"
 ```
 顺便贴出那个解析的函数吧， 没有用perl的package，直接抄了个函数丢到数据库里比较省事儿，而且也不用担心效率太低。
-```
+``` perl
 CREATE OR REPLACE FUNCTION public.decode_url_part(p character varying)
  RETURNS character varying
  LANGUAGE sql

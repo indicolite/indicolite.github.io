@@ -6,7 +6,7 @@ comments: true
 categories:
 ---
 贴一段大约九个月前的一个函数，主要是实现了在pg数据库里调用外部接口直接拿到结果，然后拼凑数据给人家的。比较烂，各种变量也不规范。先不改了，贴出来对比后来。
-```
+``` perl
 CREATE OR REPLACE FUNCTION public.get_pvuv()
   RETURNS text
   LANGUAGE plperl
