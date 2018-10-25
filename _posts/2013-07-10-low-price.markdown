@@ -1,0 +1,351 @@
+---
+layout: post
+title: "Low_Price_Toolkit"
+date: 2013-07-10 15:17:10 +0800
+comments: true
+categories:
+---
+这个比价工具土了点，但是功能基本都实现了。改了几版，需求方的姐姐都不大满意。最后还是绕回来了，加了链接，人家觉得好用了些。 本来么，作为一个搞后端的，我对前端比较白痴，不过打算也顺便学习下，会有用得到的地方的，对吧。常常欢乐，加油加油。
+``` perl
+#!/usr/bin/perl
+use strict;
+use warnings;
+use POSIX qw(strftime mktime);
+use DBD::PgPP;
+#use Smart::Comments;
+use CGI;
+use Carp;
+use List::MoreUtils qw/uniq/;
+use Data::Dumper;
+
+print "Content-type: text/html\n\n";
+
+my $snap_dt = my $dt_start = &get_date( strftime("%Y-%m-%d", localtime(time)));
+my $dt_end = &get_date( strftime("%Y-%m-%d", localtime(time)) );
+
+my $q = CGI->new();
+my $arg_dep = $q->param('dep') || '北京|上海|广州|成都|香港';
+my $arg_arr = $q->param('arr') || '马尔代夫|三亚|普吉岛';
+my $arg_days = $q->param('days') || 6;
+my $arg_start = $q->param('start');
+my $arg_end = $q->param('end');
+my $arg_snap_dt = $q->param('snap_dt');
+
+$dt_start = &get_date($arg_start) if $arg_start;
+$dt_end = &get_date($arg_end) if $arg_end;
+$snap_dt = &get_date($arg_snap_dt) if $arg_snap_dt;
+
+my $dt_start_str = $arg_start = strftime("%Y-%m-%d", localtime($dt_start));
+my $dt_end_str = $arg_end = strftime("%Y-%m-%d", localtime($dt_end));
+my $snap_dt_str = $arg_snap_dt = strftime("%Y-%m-%d", localtime($snap_dt));
+
+my $res = {};
+
+sub money_format {
+    (my $n = int(shift)) =~ s/\G(\d{1,3})(?=(?:\d\d\d)+(?:\.|$))/$1,/g;
+    #$n = substr($n, 0, index($n, '.'));
+    return "$n";
+}
+
+sub get_date {
+    my $dt = shift;
+    my ($y, $m , $d ) = split("-", $dt );
+    return mktime(0, 0, 0, $d, $m-1, $y-1900, 0, 0);
+}
+
+sub get_route_data {
+    my $sql = qq/
+        select
+            id,
+            wrapperid,
+            wrappername,
+            departure as dep,
+            arrive as arr,
+            validperiods,
+            sourceurl,
+            day
+        from
+            report.route3_snapshoot
+        where
+            function = '自由行'
+            and dateofexpire::date >= '$dt_start_str'::date
+            and dateofdeparture::date <= '$dt_end_str'::date
+            and departure is not null
+            and arrive ~ '$arg_arr'
+            and departure ~ '$arg_dep'
+            and day = '$arg_days'
+            and thedate = '$snap_dt_str'
+    /;
+
+    my $dbh = get_db_conn('xxx', 'xxxx.com', 'xxxx', 'xxxxxxxxxxxxxxxxxxx');
+    my $r = db_query($dbh, $sql);
+    for ( @$r ) {
+        my $arr = '';
+        if ( $_->{arr} =~ /($arg_arr)/ ) {
+            $arr = $1;
+        }
+
+        my %dep_dates = &parse_validperiods( $_->{validperiods} );
+        my $key = join("", ( $_->{dep}, $arr, $_->{day} ) );
+        ###my $url = join("", ( $_->{wrapperid}, $_->{sourceurl} ) );
+
+        for my $dt ( keys %dep_dates ) {
+            my $price = $dep_dates{$dt};
+            #next if ( !$_->{dep} or !$_->{hotel_names} or !$_->{day} );
+            $res->{$key}->{$dt}->{low} = &get_low_price($res->{$key}->{$dt}->{low}, $price);
+            if ( $_->{wrapperid} eq 'tuniu' ) {
+                $res->{$key}->{$dt}->{tuniu} = &get_low_price($res->{$key}->{$dt}->{tuniu}, $price);
+                if ($res->{$key}->{$dt}->{tuniu} eq $price) {
+                    $res->{$key}->{$dt}->{tuniu_url} = $_->{sourceurl};
+                }
+            } elsif ( $_->{wrapperid} =~ /^qb2c_/ ) {
+                $res->{$key}->{$dt}->{b2c} = &get_low_price($res->{$key}->{$dt}->{b2c}, $price);
+                if ($res->{$key}->{$dt}->{b2c} eq $price) {
+                    $res->{$key}->{$dt}->{b2c_url} = $_->{id};
+                }
+            } else {
+                $res->{$key}->{$dt}->{cpc} = &get_low_price($res->{$key}->{$dt}->{cpc}, $price);
+                if ($res->{$key}->{$dt}->{cpc} eq $price) {
+                    $res->{$key}->{$dt}->{cpc_url} = $_->{sourceurl};
+                }
+            }
+        }
+    }
+    ### $res
+}
+
+sub get_low_price {
+    my $low;
+    for my $t ( @_ ) {
+        if ( defined $t && ( (defined $low && ( $low > $t )) or (!defined $low) ) ) {
+            $low = $t;
+        }
+    }
+    return $low;
+}
+
+sub parse_validperiods {
+    my %dep_dates;
+    my $validperiods = shift;
+    while ( $validperiods =~ /(\d+) (\d+) (\d+)/g ) {
+        my ( $dt1, $dt2, $price ) = ($1, $2, $3);
+        $dt1 = $dt_start if ( $dt1 < $dt_start );
+        for ( ; $dt1 <= ($dt2 > $dt_end ? $dt_end : $dt2); $dt1 = $dt1 + 3600*24 ) {
+            my $dt = strftime("%Y-%m-%d", localtime($dt1) );
+            $dep_dates{$dt} = $price;
+        }
+    }
+    return %dep_dates;
+}
+
+sub get_db_conn {
+    my ($dbname, $host, $dbuser, $passwd) = @_;
+    my $handle = DBI->connect( "dbi:PgPP:dbname=$dbname;host=$host;port=5432",
+                               "$dbuser", "$passwd", { AutoCommit => 1 } );
+    return $handle;
+}
+
+sub db_query {
+    my ($conn, $sql) = @_;
+    my $res = undef;
+
+    if (length($sql) == 0) {
+        return $res;
+    }
+
+    eval {
+        $res = $conn->selectall_arrayref($sql, {Slice => {}});
+    };
+
+    if (!defined $res) {
+        my $log_str = "error in do db operation: $sql. ERROR:" . $conn->errstr;
+        print ("error:" . $log_str);
+    }
+
+    return $res;
+}
+
+
+sub main {
+    &get_route_data;
+    &output;
+}
+
+sub output {
+    print <<EOF;
+    <html>
+        <head>
+            <meta http-equiv="content-type" content="text/html;charset=UTF-8">
+            <link type="text/css" rel="stylesheet" href="http://xxx.xxxx.com:8888/css/smoothness/jquery-ui.min.css"/>
+            <script type="text/javascript" src="http://xxx.xxxx.com:8888/js/3rdparty/jquery.js"></script>
+            <script type="text/javascript" src="http://xxx.xxxx.com:8888/js/3rdparty/jquery-ui.min.js"></script>
+            <link type="text/css" rel="stylesheet" href="/tts.css"/>
+            <title>度假低价比较</title>
+            <script>
+                \$(window).ready(
+                    function() {
+                        \$('#start').datepicker({
+                            dateFormat: 'yy-mm-dd'
+                        });
+                        \$('#end').datepicker({
+                            dateFormat: 'yy-mm-dd'
+                        });
+                        \$('#snap_dt').datepicker({
+                            dateFormat: 'yy-mm-dd'
+                        });
+                    }
+                );
+            </script>
+        </head>
+        <body>
+            <div>
+                <form>
+                    <lable>出发</lable><input name='dep' value='$arg_dep' />
+                    <lable>到达</lable><input name='arr' value='$arg_arr' />
+                    <lable>行程天数</lable><input size=3 name='days' value='$arg_days' />
+                    <lable>开始日期</lable><input size=12 name='start' id='start' value='$arg_start' />
+                    <lable>结束日期</lable><input size=12 name='end' id='end' value='$arg_end' />
+                    <lable>快照日期</lable><input size=12 name='snap_dt' id='snap_dt' value='$arg_snap_dt' />
+                    <input type=submit />
+                </form>
+                <p>注意: </p>
+                <p>1 数据会在每小时的10分和40分更新，每次更新大概需要8分钟。</br>
+                2 上面的出发、到达、酒店关键字都支持使用|分隔多个。</p>
+            </div>
+            <div>
+                <h3 id=total></h3>
+            </div>
+            <div>
+EOF
+    my $total = {
+        total => { can_cmp => 0, b2c_low => 0 }
+    };
+    for my $key ( keys %$res ) {
+
+        my ( $dep, $arr, $days ) = split(//, $key);
+
+        my $summary = {
+            total => { total => 0, can_cmp => 0, b2c_low => 0 }
+        };
+        for my $dt ( keys %{$res->{$key}} ) {
+            if ( $res->{$key}->{$dt}->{b2c} ) {
+                if ( $res->{$key}->{$dt}->{tuniu} || $res->{$key}->{$dt}->{cpc} ) {
+                    $summary->{total}->{can_cmp} ++;
+                    if ( $res->{$key}->{$dt}->{b2c} eq $res->{$key}->{$dt}->{low} ) {
+                        $summary->{total}->{b2c_low} ++;
+                    }
+                }
+            }
+
+            for my $k ( keys %{$res->{$key}->{$dt}} ){
+                next if $k eq 'low';
+                $summary->{one}->{$k}++;
+            }
+            $summary->{total}->{total}++;
+        }
+    
+        my $summary_str = '';
+        for ( keys %{$summary->{one}} ) {
+            $summary_str .= " $_: $summary->{one}->{$_}, ";
+            $total->{conver_days}->{$_} += $summary->{one}->{$_};
+        }
+
+        $summary_str .= sprintf(" total: %s, can_cmp: %s, b2c_low: %s ",
+            $summary->{total}->{total},
+            $summary->{total}->{can_cmp},
+            $summary->{total}->{b2c_low},
+        );
+
+        $total->{total}->{can_cmp} += $summary->{total}->{can_cmp};
+        $total->{total}->{b2c_low} += $summary->{total}->{b2c_low};
+
+        my $class = "";
+        print qq(
+                <div>
+                    <span>$dep, $arr, $days</span><br />
+                    <span>[ <b>Summary:</b> $summary_str]</span>
+                    <table>
+                        <tr>
+                            <th></th>
+        );
+        for my $dt ( sort keys %{$res->{$key}} ) {
+            print "         <th>$dt</th>";
+        }
+        print qq(
+                        </tr>
+                        <tr>
+                            <td>tuniu</td>
+        );
+        for my $dt ( sort keys %{$res->{$key}} ) {
+            if ( $res->{$key}->{$dt}->{tuniu} eq $res->{$key}->{$dt}->{low} ) {
+                $class = 'class="red"';
+            } else {
+                $class = '';
+            }
+            print "         <td $class> <a href='$res->{$key}->{$dt}->{tuniu_url}'> $res->{$key}->{$dt}->{tuniu}</a> </td>";
+        }
+        print qq(
+                        </tr>
+                        <tr>
+                            <td>cpc</td>
+        );
+        for my $dt ( sort keys %{$res->{$key}} ) {
+            if ( $res->{$key}->{$dt}->{cpc} eq $res->{$key}->{$dt}->{low} ) {
+                $class = 'class="red"';
+            } else {
+                $class = '';
+            }
+
+            print "         <td $class> <a href='$res->{$key}->{$dt}->{cpc_url}'> $res->{$key}->{$dt}->{cpc}</a> </td>";
+        }
+        print qq(
+                        </tr>
+                        <tr>
+                            <td>b2c</td>
+        );
+        for my $dt ( sort keys %{$res->{$key}} ) {
+            if ( $res->{$key}->{$dt}->{b2c} eq $res->{$key}->{$dt}->{low} ) {
+                $class = 'class="red"';
+            } else {
+                $class = '';
+            }
+
+            print "         <td $class> <a href='http://xxx.xxxx.com/pi/detail_$res->{$key}->{$dt}->{b2c_url}'> $res->{$key}->{$dt}->{b2c}</a> </td>";
+        }
+        print qq(
+                        </tr>
+                    </table>
+                </div>
+        );
+    }
+
+    my $total_str = '日程覆盖: ';
+    for ( keys %{$total->{conver_days}} ) {
+        $total_str .= " $_ $total->{conver_days}->{$_}, "
+    }
+
+
+    #$total_str .= " total $total->{total}->{hotel}, ";
+    $total_str .= "底价: ";
+    $total_str .= sprintf(" can_cmp: %s, b2c_low: %s ",
+        $total->{total}->{can_cmp},
+        $total->{total}->{b2c_low},
+    );
+
+    print <<EOF;
+            <script>
+                \$(window).ready(
+                    function() {
+                        \$('#total').text('$total_str');
+                    }
+                );
+            </script>
+
+            </div>
+        </body>
+    </html>
+EOF
+}
+
+&main;
+```

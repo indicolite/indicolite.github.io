@@ -1,0 +1,30 @@
+---
+layout: post
+title: "Get_pvuv_Stats"
+date: 2013-03-12 09:13:17 +0800
+comments: true
+categories:
+---
+贴一段大约九个月前的一个函数，主要是实现了在pg数据库里调用外部接口直接拿到结果，然后拼凑数据给人家的。比较烂，各种变量也不规范。先不改了，贴出来对比后来。
+```
+CREATE OR REPLACE FUNCTION public.get_pvuv()
+  RETURNS text
+  LANGUAGE plperl
+AS $function$
+
+  my $slt = 'select current_date -1 as yesterday;';
+  my $con = spi_exec_query($slt);
+  my $yesterday = ($con->{rows}[0])->{yesterday};
+  my $url = "http://l-dataware1.data.cn.com:8090/qops/interface/pvuv.jsp?thedate=$yesterday";
+  my $sql = "select content from http_get('$url');";
+  my $cont = spi_exec_query($sql);
+  $conte = $cont->{rows}[0]->{content};
+  my @en_content = $conte;
+
+  @ids = split/:/,$en_content[0];
+  $result = $ids[1];
+  $result =~ s/\s+//gs;
+
+  return $result;
+$function$
+```

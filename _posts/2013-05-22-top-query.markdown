@@ -1,0 +1,46 @@
+---
+layout: post
+title: "Top_Query_Stats"
+date: 2013-05-22 13:19:17 +0800
+comments: true
+categories:
+---
+就是这段代码，之前循环的效率很低，最后写到一条命令里面，将收集的beacon日志的热门覆盖放到数据库里给程序做排序的权重， 跟我相关的就是把它们丢到数据库里，仅此而已。
+```
+#!/bin/bash
+DEST=$(dirname $0)
+
+set -x
+PSQL="/opt/pg92/bin/psql"
+DBHOST00=xxx
+DB00=xxx
+USR=xxx
+
+#DIRS=`date "+%Y%m%d"`
+lastday=`date -d yesterday +%Y%m%d`
+#yesterday_mon=$(date -d "yesterday" "+%Y%m")
+temp1=`date -d "-1 day" +%Y%m%d`
+temp2=`date -d "-2 day" +%Y%m%d`
+temp3=`date -d "-3 day" +%Y%m%d`
+temp4=`date -d "-4 day" +%Y%m%d`
+temp5=`date -d "-5 day" +%Y%m%d`
+temp6=`date -d "-6 day" +%Y%m%d`
+temp7=`date -d "-7 day" +%Y%m%d`
+
+find /export/logs/beacon/{$temp1,$temp2,$temp3,$temp4,$temp5,$temp6,$temp7} -name "b-dujia.log.gz"| xargs zcat | awk -F'^A' '$11==195{print $12,$13}' | sort | uniq -c | sort -k2,2 -k1nr,1 | awk 'BEGIN{lastkey=""} { if ( lastkey == $2 && count <=4 ) { count++; print $2,$3, $1 } else if( lastkey != $2 ) { count=1; lastkey=$2; print $2,$3,$1 }  }' | sed -s 's/[[:space:]][[:space:]]*/\t/g' | awk -F '\t' '{ i=1;while(i<NF) {i++} if(i==3) {print $0}}' | awk -F '\t' '$1 !~/-|\x27/ {print $0}' | awk -F '\t' '$2 !~/-|\x27/ {print $0}' | awk -F '\t' '$1 !="%E5%A4%A7%E8%BD%9Ax%00%00" {print $0}' > /tmp/aaaa.txt
+
+$PSQL -h $DBHOST00 -U $USR -d $DB00 -H -c $"truncate table top_query"
+$PSQL -h $DBHOST00 -U $USR -d $DB00 -H -c $"\copy top_query (departure, query, freq) from '/tmp/aaaa.txt'"
+$PSQL -h $DBHOST00 -U $USR -d $DB00 -H -c $"update top_query set departure=decode_url_part(departure),query=decode_url_part(query)"
+```
+顺便贴出那个解析的函数吧， 没有用perl的package，直接抄了个函数丢到数据库里比较省事儿，而且也不用担心效率太低。
+```
+CREATE OR REPLACE FUNCTION public.decode_url_part(p character varying)
+ RETURNS character varying
+ LANGUAGE sql
+ IMMUTABLE STRICT
+AS $function$
+SELECT convert_from(CAST(E'\\x' || string_agg(CASE WHEN length(r.m[1]) = 1 THEN encode(convert_to(r.m[1], 'SQL_ASCII'), 'hex') ELSE substring(r.m[1] from 2 for 2) END, '') AS bytea), 'UTF8')
+FROM regexp_matches($1, '%[0-9a-f][0-9a-f]|.', 'gi') AS r(m);
+$function$
+```
