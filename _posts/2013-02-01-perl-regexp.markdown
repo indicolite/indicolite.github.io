@@ -5,7 +5,7 @@ date: 2013-02-01 09:13:17 +0800
 comments: true
 categories:
 ---
-```
+``` perl
 #!/usr/bin/perl
 #
 use strict;

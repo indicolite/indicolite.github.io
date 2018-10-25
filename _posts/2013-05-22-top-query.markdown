@@ -6,7 +6,7 @@ comments: true
 categories:
 ---
 就是这段代码，之前循环的效率很低，最后写到一条命令里面，将收集的beacon日志的热门覆盖放到数据库里给程序做排序的权重， 跟我相关的就是把它们丢到数据库里，仅此而已。
-```
+``` Bash
 #!/bin/bash
 DEST=$(dirname $0)
 
